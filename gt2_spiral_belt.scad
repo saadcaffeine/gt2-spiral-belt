@@ -17,6 +17,8 @@ THIS VERSION (modified 2026-09-27)
       2 mm GT2 pitch and tooth shape are preserved.
     - Parametric total belt length and overall spiral diameter, with a
       solver for the inner radius or the gap between turns.
+    - Adjustable base (back) thickness; GT2 teeth and pitch line unchanged.
+    - Adjustable tooth height (vertical stretch of the GT2 tooth profile).
     - Parameters exposed to the OpenSCAD Customizer.
     - Sanity checks and a summary printed to the console.
     - Original demo() and top-level straight belt call removed.
@@ -46,6 +48,10 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
 total_length = 400; // [20:2:5000]
 // Belt width in mm = overall height of the part
 belt_width = 6; // [2:0.5:30]
+// Thickness of the flat base (tooth land to belt back) in mm. GT2 standard = 0.63. Teeth are unchanged
+base_thickness = 0.63; // [0.3:0.01:5]
+// Tooth height from the tooth land to the tip in mm. GT2 standard = 0.75. Other values stretch the tooth vertically and won't match GT2 pulleys
+tooth_height = 0.75; // [0.2:0.01:3]
 // Teeth face the centre (like a belt wound on a spool); untick for teeth facing out
 teeth_inward = true;
 // Keep a toothless tail if the length isn't a multiple of 2 mm
@@ -186,16 +192,24 @@ module gt2_pulley(teeth=16, h=7, r=0, grow=-0.0, center=false, invert=false){
 //  pitch line, and total_length is the true pitch length of the belt -
 //  the same way a real belt keeps its pitch when it wraps a pulley.
 //
-//  Belt cross-section (from gt2_t): back at y=+0.376, land at y=-0.254,
-//  tooth tip at y=-1.004 -> 1.38 mm total, 0.75 mm tooth height (GT2 nominal).
+//  Belt cross-section (from gt2_t): land at y=-0.254, tooth tip at y=-1.004
+//  (0.75 mm tooth height, GT2 nominal). The back sits at land + base_thickness:
+//  y=+0.376 for the standard 0.63 mm base (1.38 mm total). Changing
+//  base_thickness only moves the back; the teeth and the pitch line
+//  (0.254 mm above the land) stay put, so the belt still meshes with GT2 pulleys.
+//  tooth_height stretches the tooth vertically about the land (width at the
+//  land and pitch unchanged). 0.75 mm is GT2; other values are non-standard.
 // ============================================================================
 
 // GT2 profile constants (from gt2_t)
+GT2_LAND_     = -0.254;
 GT2_PITCH     = 2;
-GT2_BACK      = 0.376; // pitch line -> belt back
+GT2_BACK      = GT2_LAND_ + base_thickness; // pitch line -> belt back (0.376 at standard 0.63 base)
 GT2_LAND      = -0.254;// pitch line -> tooth land
-GT2_TIP       = -1.004;// pitch line -> tooth tip
-GT2_THICK     = GT2_BACK - GT2_TIP; // 1.38
+GT2_TIP_STD   = -1.004;// pitch line -> tooth tip in the original GT2 profile
+GT2_TIP       = GT2_LAND_ - tooth_height; // pitch line -> tooth tip (-1.004 at standard 0.75)
+GT2_TOOTH_K   = tooth_height / (GT2_LAND_ - GT2_TIP_STD); // vertical tooth scale, 1 = GT2
+GT2_THICK     = GT2_BACK - GT2_TIP; // total thickness, 1.38 at standard base
 
 // ---------------- Archimedean spiral maths ----------------
 // Pitch line: r = a*phi,  a = turn_pitch / (2*PI),  polar angle t = phi - phi0
@@ -259,7 +273,10 @@ function subdivide(v, m) = [
 function gt2_strip(L, keep_tail) =
     let(tn    = floor(L / GT2_PITCH + 1e-9),
         Lend  = keep_tail ? L : tn * GT2_PITCH,
-        teeth = v2d_tx([1, 0], gt2_ts(tn)))
+        // Stretch the tooth below the land to tooth_height; width at the land,
+        // pitch and pitch line are untouched
+        teeth = [for (p = v2d_tx([1, 0], gt2_ts(tn)))
+                    p[1] < GT2_LAND ? [p[0], GT2_LAND + (p[1] - GT2_LAND) * GT2_TOOTH_K] : p])
     rm_dup(concat(
         [[0, GT2_LAND]],
         teeth,
@@ -290,7 +307,9 @@ module gt2_spiral_2d(length=400, r0=12, gap=0.6, inward=true, keep_tail=false, s
     echo(str("GT2 spiral: inner radius (pitch) ", round(r0*100)/100, " mm, turn gap ",
              round(gap*1000)/1000, " mm, overall diameter ",
              round(2*(a*phi_end + gt2_outer_off(inward))*100)/100, " mm, hole diameter ",
-             round(2*(r0 - gt2_inner_off(inward))*100)/100, " mm"));
+             round(2*(r0 - gt2_inner_off(inward))*100)/100, " mm, belt thickness ",
+             round(GT2_THICK*1000)/1000, " mm (base ", round((GT2_BACK-GT2_LAND)*1000)/1000, " mm, teeth ",
+             round(tooth_height*1000)/1000, " mm", abs(tooth_height-0.75) > 1e-6 ? " - NON-STANDARD, won't mesh with GT2 pulleys" : "", ")"));
 }
 
 module gt2_spiral_belt(length=400, h=6, r0=12, gap=0.6, inward=true, keep_tail=false, seg=0.25){
